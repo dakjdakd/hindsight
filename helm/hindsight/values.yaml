@@ -375,7 +375,7 @@ ingress:
         - path: /
           pathType: Prefix
           service: controlPlane
-        - path: /api
+        - path: /v1
           pathType: Prefix
           service: api
 
