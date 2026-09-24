@@ -1515,6 +1515,8 @@ async def retain_batch(
     # memory_defense.triggered webhook when one is configured.
     _policy = parse_policy(config.memory_defense)
     _blocked_violations: list[BlockedViolation] = []
+    original_count = len(contents)
+    surviving_indices: list[int] | None = None
 
     if memory_defense_extension is not None and _policy.enabled:
         async with acquire_with_retry(pool) as _defense_conn:
@@ -1575,12 +1577,22 @@ async def retain_batch(
         # Remove blocked items from the pipeline.
         _skip_indices = {v.index for v in _blocked_violations}
         if _skip_indices:
-            _surviving = [i for i in range(len(contents)) if i not in _skip_indices]
-            contents = [contents[i] for i in _surviving]
-            contents_dicts = [contents_dicts[i] for i in _surviving]
+            surviving_indices = [i for i in range(original_count) if i not in _skip_indices]
+            contents = [contents[i] for i in surviving_indices]
+            contents_dicts = [contents_dicts[i] for i in surviving_indices]
             # If nothing survives, return empty results immediately.
             if not contents:
-                return RetainBatchResult([[] for _ in contents_dicts], TokenUsage(), 0)
+                return RetainBatchResult([[] for _ in range(original_count)], TokenUsage(), 0)
+
+    def align_result(result: RetainBatchResult) -> RetainBatchResult:
+        if surviving_indices is None:
+            return result
+        # Filtering used to compress results, but sub-batch merging and completion
+        # hooks index by submitted item; keep empty slots for blocked items.
+        memory_ids: list[list[str]] = [[] for _ in range(original_count)]
+        for original_index, ids in zip(surviving_indices, result.memory_ids):
+            memory_ids[original_index] = ids
+        return RetainBatchResult(memory_ids, result.usage, result.processed_content_tokens)
 
     # Resolve effective document_id early so both delta and streaming paths
     # can find existing chunks from a prior attempt. On retry, a generated
@@ -1793,7 +1805,7 @@ async def retain_batch(
             logger.info("\n" + "\n".join(log_buffer) + "\n")
             # No new content was processed — report 0 so callers can skip
             # billing cleanly instead of falling back to full-content billing.
-            return RetainBatchResult([[] for _ in contents], TokenUsage(), 0)
+            return align_result(RetainBatchResult([[] for _ in contents], TokenUsage(), 0))
 
     # --- Delta retain: check if we can skip unchanged chunks ---
     #
@@ -1863,7 +1875,7 @@ async def retain_batch(
             vlm_config=vlm_config,
         )
         if delta_result is not None:
-            return delta_result
+            return align_result(delta_result)
 
     # --- Always use the streaming pipeline (producer-consumer batching) ---
     # Even small documents go through the same path — they just end up as a
@@ -1911,7 +1923,7 @@ async def retain_batch(
         f"{num_batches} batch{'es' if num_batches != 1 else ''}"
     )
 
-    return await _streaming_retain_batch(
+    result = await _streaming_retain_batch(
         pool=pool,
         embeddings_model=embeddings_model,
         llm_config=llm_config,
@@ -1947,6 +1959,7 @@ async def retain_batch(
         attachment_loader=attachment_loader,
         vlm_config=vlm_config,
     )
+    return align_result(result)
 
 
 # ---------------------------------------------------------------------------
