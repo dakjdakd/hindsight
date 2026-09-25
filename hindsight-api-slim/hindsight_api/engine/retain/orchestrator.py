@@ -1574,21 +1574,23 @@ async def retain_batch(
         if len(_blocked_violations) == len(contents):
             raise MemoryDefenseAllBlockedError(_blocked_violations)
 
-        # Remove blocked items from the pipeline.
+        # Remove blocked items from the pipeline. At least one survives — the
+        # all-blocked case raised above.
         _skip_indices = {v.index for v in _blocked_violations}
-        if _skip_indices:
-            surviving_indices = [i for i in range(original_count) if i not in _skip_indices]
-            contents = [contents[i] for i in surviving_indices]
-            contents_dicts = [contents_dicts[i] for i in surviving_indices]
-            # If nothing survives, return empty results immediately.
-            if not contents:
-                return RetainBatchResult([[] for _ in range(original_count)], TokenUsage(), 0)
+        surviving_indices = [i for i in range(original_count) if i not in _skip_indices]
+        contents = [contents[i] for i in surviving_indices]
+        contents_dicts = [contents_dicts[i] for i in surviving_indices]
 
-    def align_result(result: RetainBatchResult) -> RetainBatchResult:
+    def _align_result(result: RetainBatchResult) -> RetainBatchResult:
+        """Re-expand a survivor-length result back to one slot per submitted item.
+
+        Dropping blocked items shortens the list the rest of the pipeline sees, but
+        both merge paths in MemoryEngine and the on_retain_complete hook index
+        memory_ids by SUBMITTED position — so a compacted list attributed the
+        survivors' ids to the blocked items. Blocked slots get [].
+        """
         if surviving_indices is None:
             return result
-        # Filtering used to compress results, but sub-batch merging and completion
-        # hooks index by submitted item; keep empty slots for blocked items.
         memory_ids: list[list[str]] = [[] for _ in range(original_count)]
         for original_index, ids in zip(surviving_indices, result.memory_ids):
             memory_ids[original_index] = ids
@@ -1805,7 +1807,7 @@ async def retain_batch(
             logger.info("\n" + "\n".join(log_buffer) + "\n")
             # No new content was processed — report 0 so callers can skip
             # billing cleanly instead of falling back to full-content billing.
-            return align_result(RetainBatchResult([[] for _ in contents], TokenUsage(), 0))
+            return _align_result(RetainBatchResult([[] for _ in contents], TokenUsage(), 0))
 
     # --- Delta retain: check if we can skip unchanged chunks ---
     #
@@ -1875,7 +1877,7 @@ async def retain_batch(
             vlm_config=vlm_config,
         )
         if delta_result is not None:
-            return align_result(delta_result)
+            return _align_result(delta_result)
 
     # --- Always use the streaming pipeline (producer-consumer batching) ---
     # Even small documents go through the same path — they just end up as a
@@ -1959,7 +1961,7 @@ async def retain_batch(
         attachment_loader=attachment_loader,
         vlm_config=vlm_config,
     )
-    return align_result(result)
+    return _align_result(result)
 
 
 # ---------------------------------------------------------------------------
