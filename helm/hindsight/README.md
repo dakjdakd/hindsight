@@ -142,11 +142,11 @@ postgresql:
 
 ### Ingress
 
-To expose the services via ingress:
-
 The control plane serves both the UI and its `/api/*` routes. The Hindsight
 data API is exposed at `/v1/*`; Kubernetes routes this longer prefix to the API
 service and sends other paths, including `/api/*`, to the control plane.
+
+To expose the services via ingress:
 
 ```yaml
 ingress:
