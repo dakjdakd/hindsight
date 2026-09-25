@@ -961,8 +961,6 @@ class Hindsight:
         enable_reranking: bool | None = None,
         background: str | None = None,
     ) -> BankProfileResponse:
-        import aiohttp
-
         body: dict[str, Any] = {}
         if name is not None:
             body["name"] = name
@@ -2479,7 +2477,9 @@ class Hindsight:
         if download_url.lower().startswith(("https://", "http://")):
             # Object stores return signed URLs. Preserve their query string and
             # keep Hindsight's configured auth headers off the storage request.
-            async with aiohttp.ClientSession() as session:
+            # trust_env matches the generated client, so HTTP(S)_PROXY also
+            # reaches the storage host.
+            async with aiohttp.ClientSession(trust_env=True) as session:
                 async with session.get(
                     URL(download_url, encoded=True), timeout=aiohttp.ClientTimeout(total=self._timeout)
                 ) as response:
@@ -2732,8 +2732,6 @@ class Hindsight:
         return await self._aget_bank_config(bank_id)
 
     async def _aget_bank_config(self, bank_id: str) -> dict[str, Any]:
-        import aiohttp
-
         url = f"{self._base_url}/v1/default/banks/{bank_id}/config"
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         async with aiohttp.ClientSession() as session:
@@ -3073,8 +3071,6 @@ class Hindsight:
         return await self._aupdate_bank_config(bank_id, updates)
 
     async def _aupdate_bank_config(self, bank_id: str, updates: dict[str, Any]) -> dict[str, Any]:
-        import aiohttp
-
         url = f"{self._base_url}/v1/default/banks/{bank_id}/config"
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         async with aiohttp.ClientSession() as session:
@@ -3107,8 +3103,6 @@ class Hindsight:
         return await self._areset_bank_config(bank_id)
 
     async def _areset_bank_config(self, bank_id: str) -> dict[str, Any]:
-        import aiohttp
-
         url = f"{self._base_url}/v1/default/banks/{bank_id}/config"
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         async with aiohttp.ClientSession() as session:
